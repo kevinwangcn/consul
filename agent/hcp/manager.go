@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hashicorp/consul/agent/hcp/telemetry"
 	"github.com/hashicorp/consul/lib"
 	"github.com/hashicorp/go-hclog"
 )
@@ -53,6 +54,7 @@ type Manager struct {
 	cfgMu sync.RWMutex
 
 	updateCh chan struct{}
+	reporter *telemetry.Reporter
 
 	// testUpdateSent is set by unit tests to signal when the manager's status update has triggered
 	testUpdateSent chan struct{}
@@ -78,6 +80,8 @@ func NewManager(cfg ManagerConfig) *Manager {
 func (m *Manager) Run(ctx context.Context) {
 	var err error
 	m.logger.Debug("HCP manager starting")
+	m.reporter = telemetry.NewReporter(telemetry.DefaultConfig())
+	defer m.reporter.Stop()
 
 	// immediately send initial update
 	select {
