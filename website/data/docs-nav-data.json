@@ -748,7 +748,21 @@
           },
           {
             "title": "Tokens",
-            "path": "security/acl/acl-tokens"
+            "routes": [
+              {
+                "title": "Overview",
+                "path": "security/acl/tokens"
+              },
+              {
+                "title": "Create ACL Tokens",
+                "routes": [
+                  {
+                    "title": "Create a service token",
+                    "path": "security/acl/tokens/create-a-service-token"
+                  }
+                ]
+              }
+            ]
           },
           {
             "title": "Policies",
