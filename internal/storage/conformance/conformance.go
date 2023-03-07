@@ -13,6 +13,8 @@ import (
 
 	"github.com/hashicorp/consul/internal/storage"
 	"github.com/hashicorp/consul/proto-public/pbresource"
+	"github.com/hashicorp/consul/proto/private/prototest"
+	"github.com/hashicorp/consul/sdk/testutil/retry"
 )
 
 type TestOptions struct {
@@ -23,13 +25,11 @@ type TestOptions struct {
 
 // Test runs a suite of tests against a storage.Backend implementation to check
 // it correctly implements our required behaviours.
-//
-// Note: it currently checks for stronger consistency than we actually need. We
-// will need to handle eventual consistency when we implement the Raft backend.
 func Test(t *testing.T, opts TestOptions) {
 	require.NotNil(t, opts.NewBackend, "NewBackend method is required")
 
-	t.Run("Read", func(t *testing.T) { testRead(t, opts) })
+	t.Run("Read", func(t *testing.T) { testRead(t, opts, testReadEventually) })
+	t.Run("ReadConsistent", func(t *testing.T) { testRead(t, opts, testReadConsistent) })
 	t.Run("CAS Write", func(t *testing.T) { testCASWrite(t, opts) })
 	t.Run("CAS Delete", func(t *testing.T) { testCASDelete(t, opts) })
 	t.Run("OwnerReferences", func(t *testing.T) { testOwnerReferences(t, opts) })
@@ -37,10 +37,48 @@ func Test(t *testing.T, opts TestOptions) {
 	testListWatch(t, opts)
 }
 
-func testRead(t *testing.T, opts TestOptions) {
-	ctx := testContext(t)
-	backend := opts.NewBackend(t)
+type testingT interface {
+	require.TestingT
+	prototest.TestingT
+}
 
+type testReadFn func(
+	t *testing.T,
+	be storage.Backend,
+	ctx context.Context,
+	id *pbresource.ID,
+	fn func(t testingT, res *pbresource.Resource, err error),
+)
+
+func testReadConsistent(
+	t *testing.T,
+	be storage.Backend,
+	ctx context.Context,
+	id *pbresource.ID,
+	fn func(testingT, *pbresource.Resource, error),
+) {
+	t.Helper()
+
+	res, err := be.ReadConsistent(ctx, id)
+	fn(t, res, err)
+}
+
+func testReadEventually(
+	t *testing.T,
+	be storage.Backend,
+	ctx context.Context,
+	id *pbresource.ID,
+	fn func(testingT, *pbresource.Resource, error),
+) {
+	t.Helper()
+
+	eventually(t, func(r testingT) {
+		res, err := be.Read(ctx, id)
+		fn(r, res, err)
+	})
+}
+
+func testRead(t *testing.T, opts TestOptions, testRead testReadFn) {
 	res := &pbresource.Resource{
 		Id: &pbresource.ID{
 			Type:    typeAv1,
@@ -50,54 +88,87 @@ func testRead(t *testing.T, opts TestOptions) {
 		},
 		Version: "1",
 	}
-	_, err := backend.WriteCAS(ctx, res, "")
-	require.NoError(t, err)
 
 	t.Run("simple", func(t *testing.T) {
-		output, err := backend.Read(ctx, res.Id)
+		ctx := testContext(t)
+		backend := opts.NewBackend(t)
+
+		_, err := backend.WriteCAS(ctx, res, "")
 		require.NoError(t, err)
-		require.Equal(t, res, output)
+
+		testRead(t, backend, ctx, res.Id, func(t testingT, output *pbresource.Resource, err error) {
+			require.NoError(t, err)
+			prototest.AssertDeepEqual(t, res, output)
+		})
 	})
 
 	t.Run("no uid", func(t *testing.T) {
+		ctx := testContext(t)
+		backend := opts.NewBackend(t)
+
+		_, err := backend.WriteCAS(ctx, res, "")
+		require.NoError(t, err)
+
 		id := clone(res.Id)
 		id.Uid = ""
 
-		output, err := backend.Read(ctx, id)
-		require.NoError(t, err)
-		require.Equal(t, res, output)
+		testRead(t, backend, ctx, id, func(t testingT, output *pbresource.Resource, err error) {
+			require.NoError(t, err)
+			prototest.AssertDeepEqual(t, res, output)
+		})
 	})
 
 	t.Run("different id", func(t *testing.T) {
+		ctx := testContext(t)
+		backend := opts.NewBackend(t)
+
+		_, err := backend.WriteCAS(ctx, res, "")
+		require.NoError(t, err)
+
 		id := clone(res.Id)
 		id.Name = "different"
 
-		_, err := backend.Read(ctx, id)
-		require.ErrorIs(t, err, storage.ErrNotFound)
+		testRead(t, backend, ctx, id, func(t testingT, _ *pbresource.Resource, err error) {
+			require.ErrorIs(t, err, storage.ErrNotFound)
+		})
 	})
 
 	t.Run("different uid", func(t *testing.T) {
+		ctx := testContext(t)
+		backend := opts.NewBackend(t)
+
+		_, err := backend.WriteCAS(ctx, res, "")
+		require.NoError(t, err)
+
 		id := clone(res.Id)
 		id.Uid = "b"
 
-		_, err := backend.Read(ctx, id)
-		require.ErrorIs(t, err, storage.ErrNotFound)
+		testRead(t, backend, ctx, id, func(t testingT, _ *pbresource.Resource, err error) {
+			require.ErrorIs(t, err, storage.ErrNotFound)
+		})
 	})
 
 	t.Run("different GroupVersion", func(t *testing.T) {
+		ctx := testContext(t)
+		backend := opts.NewBackend(t)
+
+		_, err := backend.WriteCAS(ctx, res, "")
+		require.NoError(t, err)
+
 		id := clone(res.Id)
 		id.Type = typeAv2
 
-		_, err := backend.Read(ctx, id)
-		require.Error(t, err)
+		testRead(t, backend, ctx, id, func(t testingT, _ *pbresource.Resource, err error) {
+			require.Error(t, err)
 
-		var e storage.GroupVersionMismatchError
-		if errors.As(err, &e) {
-			require.Equal(t, id.Type, e.RequestedType)
-			require.Equal(t, res, e.Stored)
-		} else {
-			t.Fatalf("expected storage.GroupVersionMismatchError, got: %T", err)
-		}
+			var e storage.GroupVersionMismatchError
+			if errors.As(err, &e) {
+				require.Equal(t, id.Type, e.RequestedType)
+				prototest.AssertDeepEqual(t, res, e.Stored)
+			} else {
+				t.Fatalf("expected storage.GroupVersionMismatchError, got: %T", err)
+			}
+		})
 	})
 }
 
@@ -204,8 +275,10 @@ func testCASDelete(t *testing.T, opts TestOptions) {
 
 		require.NoError(t, backend.DeleteCAS(ctx, res.Id, res.Version))
 
-		_, err = backend.Read(ctx, res.Id)
-		require.ErrorIs(t, err, storage.ErrNotFound)
+		eventually(t, func(t testingT) {
+			_, err = backend.Read(ctx, res.Id)
+			require.ErrorIs(t, err, storage.ErrNotFound)
+		})
 	})
 
 	t.Run("uid must match", func(t *testing.T) {
@@ -228,8 +301,10 @@ func testCASDelete(t *testing.T, opts TestOptions) {
 		id.Uid = "b"
 		require.NoError(t, backend.DeleteCAS(ctx, id, res.Version))
 
-		_, err = backend.Read(ctx, res.Id)
-		require.NoError(t, err)
+		eventually(t, func(t testingT) {
+			_, err = backend.Read(ctx, res.Id)
+			require.NoError(t, err)
+		})
 	})
 }
 
@@ -375,9 +450,11 @@ func testListWatch(t *testing.T, opts TestOptions) {
 
 		for desc, tc := range testCases {
 			t.Run(desc, func(t *testing.T) {
-				res, err := backend.List(ctx, tc.resourceType, tc.tenancy, tc.namePrefix)
-				require.NoError(t, err)
-				require.ElementsMatch(t, res, tc.results)
+				eventually(t, func(t testingT) {
+					res, err := backend.List(ctx, tc.resourceType, tc.tenancy, tc.namePrefix)
+					require.NoError(t, err)
+					prototest.AssertElementsMatch(t, res, tc.results)
+				})
 			})
 		}
 	})
@@ -405,7 +482,7 @@ func testListWatch(t *testing.T, opts TestOptions) {
 					require.NoError(t, err)
 
 					require.Equal(t, pbresource.WatchEvent_OPERATION_UPSERT, event.Operation)
-					require.Containsf(t, tc.results, event.Resource, "resource not in expected results: %s", event.Resource.Id)
+					prototest.AssertContainsElement(t, tc.results, event.Resource)
 				}
 			})
 
@@ -430,7 +507,7 @@ func testListWatch(t *testing.T, opts TestOptions) {
 					require.NoError(t, err)
 
 					require.Equal(t, pbresource.WatchEvent_OPERATION_UPSERT, event.Operation)
-					require.Containsf(t, tc.results, event.Resource, "resource not in expected results: %s", event.Resource.Id)
+					prototest.AssertContainsElement(t, tc.results, event.Resource)
 				}
 
 				// Delete a random resource to check we get an event.
@@ -444,7 +521,7 @@ func testListWatch(t *testing.T, opts TestOptions) {
 				require.NoError(t, err)
 
 				require.Equal(t, pbresource.WatchEvent_OPERATION_DELETE, event.Operation)
-				require.Equal(t, del, event.Resource)
+				prototest.AssertDeepEqual(t, del, event.Resource)
 			})
 		}
 	})
@@ -492,33 +569,41 @@ func testOwnerReferences(t *testing.T, opts TestOptions) {
 	_, err = backend.WriteCAS(ctx, r2, "")
 	require.NoError(t, err)
 
-	refs, err := backend.OwnerReferences(ctx, owner.Id)
-	require.NoError(t, err)
-	require.ElementsMatch(t, refs, []*pbresource.ID{r1.Id, r2.Id})
+	eventually(t, func(t testingT) {
+		refs, err := backend.OwnerReferences(ctx, owner.Id)
+		require.NoError(t, err)
+		prototest.AssertElementsMatch(t, refs, []*pbresource.ID{r1.Id, r2.Id})
+	})
 
 	t.Run("references are anchored to a specific uid", func(t *testing.T) {
 		id := clone(owner.Id)
 		id.Uid = "different"
 
-		refs, err := backend.OwnerReferences(ctx, id)
-		require.NoError(t, err)
-		require.Empty(t, refs)
+		eventually(t, func(t testingT) {
+			refs, err := backend.OwnerReferences(ctx, id)
+			require.NoError(t, err)
+			require.Empty(t, refs)
+		})
 	})
 
 	t.Run("deleting the owner doesn't remove the references", func(t *testing.T) {
 		require.NoError(t, backend.DeleteCAS(ctx, owner.Id, owner.Version))
 
-		refs, err = backend.OwnerReferences(ctx, owner.Id)
-		require.NoError(t, err)
-		require.ElementsMatch(t, refs, []*pbresource.ID{r1.Id, r2.Id})
+		eventually(t, func(t testingT) {
+			refs, err := backend.OwnerReferences(ctx, owner.Id)
+			require.NoError(t, err)
+			prototest.AssertElementsMatch(t, refs, []*pbresource.ID{r1.Id, r2.Id})
+		})
 	})
 
 	t.Run("deleting the owned resource removes its reference", func(t *testing.T) {
 		require.NoError(t, backend.DeleteCAS(ctx, r2.Id, r2.Version))
 
-		refs, err = backend.OwnerReferences(ctx, owner.Id)
-		require.NoError(t, err)
-		require.ElementsMatch(t, refs, []*pbresource.ID{r1.Id})
+		eventually(t, func(t testingT) {
+			refs, err := backend.OwnerReferences(ctx, owner.Id)
+			require.NoError(t, err)
+			prototest.AssertDeepEqual(t, refs, []*pbresource.ID{r1.Id})
+		})
 	})
 }
 
@@ -590,3 +675,8 @@ func testContext(t *testing.T) context.Context {
 }
 
 func clone[T proto.Message](v T) T { return proto.Clone(v).(T) }
+
+func eventually(t *testing.T, fn func(r testingT)) {
+	t.Helper()
+	retry.Run(t, func(r *retry.R) { fn(r) })
+}
