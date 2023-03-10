@@ -231,7 +231,7 @@ func (a *TestAgent) Start(t *testing.T) error {
 	// if we are not testing telemetry things, let's use a "mock" sink for metrics
 	if bd.RuntimeConfig.Telemetry.Disable {
 		bd.MetricsConfig = &lib.MetricsConfig{
-			Handler: metrics.NewInmemSink(1*time.Second, time.Minute),
+			Backend: metrics.NewInmemSink(1*time.Second, time.Minute),
 		}
 	}
 

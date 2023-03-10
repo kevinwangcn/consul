@@ -16,7 +16,9 @@ var (
 )
 
 type ManagerConfig struct {
-	Client Client
+	Client         Client
+	NodeID         string
+	MetricsBackend lib.MetricsHandler
 
 	StatusFn    StatusCallback
 	MinInterval time.Duration
@@ -80,8 +82,8 @@ func NewManager(cfg ManagerConfig) *Manager {
 func (m *Manager) Run(ctx context.Context) {
 	var err error
 	m.logger.Debug("HCP manager starting")
-	m.reporter = telemetry.NewReporter(telemetry.DefaultConfig())
-	defer m.reporter.Stop()
+	m.reporter = telemetry.NewReporter(telemetry.ServerConfig(m.cfg.NodeID, m.cfg.MetricsBackend))
+	go m.reporter.Run(ctx)
 
 	// immediately send initial update
 	select {

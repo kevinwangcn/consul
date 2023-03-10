@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/armon/go-metrics"
-	"github.com/hashicorp/consul/agent/hcp/telemetry"
 	"github.com/hashicorp/go-connlimit"
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/go-memdb"
@@ -474,9 +473,11 @@ func NewServer(config *Config, flat Deps, externalGRPCServer *grpc.Server, incom
 	incomingRPCLimiter.Register(s)
 
 	s.hcpManager = hcp.NewManager(hcp.ManagerConfig{
-		Client:   flat.HCP.Client,
-		StatusFn: s.hcpServerStatus(flat),
-		Logger:   logger.Named("hcp_manager"),
+		NodeID:         string(config.NodeID),
+		Client:         flat.HCP.Client,
+		StatusFn:       s.hcpServerStatus(flat),
+		MetricsBackend: flat.MetricsConfig.Backend,
+		Logger:         logger.Named("hcp_manager"),
 	})
 
 	var recorder *middleware.RequestRecorder
@@ -827,7 +828,6 @@ func NewServer(config *Config, flat Deps, externalGRPCServer *grpc.Server, incom
 
 	// Now we are setup, configure the HCP manager
 	go s.hcpManager.Run(&lib.StopChannelContext{StopCh: shutdownCh})
-	telemetry.NewReporter(telemetry.DefaultConfig())
 
 	return s, nil
 }

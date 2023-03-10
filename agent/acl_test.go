@@ -76,7 +76,7 @@ func NewTestACLAgent(t *testing.T, name string, hcl string, resolveAuthz authzRe
 	require.NoError(t, err)
 
 	bd.MetricsConfig = &lib.MetricsConfig{
-		Handler: metrics.NewInmemSink(1*time.Second, time.Minute),
+		Backend: metrics.NewInmemSink(1*time.Second, time.Minute),
 	}
 
 	agent, err := New(bd)

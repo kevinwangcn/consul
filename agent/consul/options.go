@@ -1,6 +1,7 @@
 package consul
 
 import (
+	"github.com/hashicorp/consul/lib"
 	"google.golang.org/grpc"
 
 	"github.com/hashicorp/consul-net-rpc/net/rpc"
@@ -17,6 +18,7 @@ import (
 )
 
 type Deps struct {
+	MetricsConfig    *lib.MetricsConfig
 	EventPublisher   *stream.EventPublisher
 	Logger           hclog.InterceptLogger
 	TLSConfigurator  *tlsutil.Configurator

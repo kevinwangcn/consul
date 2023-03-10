@@ -1601,7 +1601,7 @@ func TestHTTPHandlers_AgentMetricsStream_ACLDeny(t *testing.T) {
 	bd.Tokens = new(tokenStore.Store)
 	sink := metrics.NewInmemSink(30*time.Millisecond, time.Second)
 	bd.MetricsConfig = &lib.MetricsConfig{
-		Handler: sink,
+		Backend: sink,
 	}
 	d := fakeResolveTokenDelegate{authorizer: acl.DenyAll()}
 	agent := &Agent{
@@ -1630,7 +1630,7 @@ func TestHTTPHandlers_AgentMetricsStream(t *testing.T) {
 	bd.Tokens = new(tokenStore.Store)
 	sink := metrics.NewInmemSink(20*time.Millisecond, time.Second)
 	bd.MetricsConfig = &lib.MetricsConfig{
-		Handler: sink,
+		Backend: sink,
 	}
 	d := fakeResolveTokenDelegate{authorizer: acl.ManageAll()}
 	agent := &Agent{

@@ -212,10 +212,11 @@ type TelemetryConfig struct {
 type MetricsHandler interface {
 	DisplayMetrics(resp http.ResponseWriter, req *http.Request) (interface{}, error)
 	Stream(ctx context.Context, encoder metrics.Encoder)
+	Data() []*metrics.IntervalMetrics
 }
 
 type MetricsConfig struct {
-	Handler  MetricsHandler
+	Backend  MetricsHandler
 	mu       sync.Mutex
 	cancelFn context.CancelFunc
 }
@@ -363,7 +364,7 @@ func InitTelemetry(cfg TelemetryConfig, logger hclog.Logger) (*MetricsConfig, er
 	metrics.DefaultInmemSignal(memSink)
 
 	metricsConfig := &MetricsConfig{
-		Handler: memSink,
+		Backend: memSink,
 	}
 
 	var cancel context.CancelFunc
